@@ -421,7 +421,7 @@ async function runCheckPipeline(env) {
   try {
     resp = await fetch(cgaUrl, {
       headers,
-      signal: AbortSignal.timeout(25000)
+      signal: AbortSignal.timeout(30000)
     });
   } catch (err) {
     console.error(`Fetch error: ${err.message}`);
@@ -435,7 +435,8 @@ async function runCheckPipeline(env) {
     await saveMeta(kv, {
       ...meta,
       lastCheck: new Date().toISOString(),
-      consecutiveErrors: 0
+      consecutiveErrors: 0,
+      lastError: ""
     });
     return { success: true, found: meta.totalTracked || 0, new: 0, cached: true };
   }
@@ -486,7 +487,8 @@ async function runCheckPipeline(env) {
       ...meta,
       lastCheck: new Date().toISOString(),
       consecutiveEmptyRuns: 0,
-      consecutiveErrors: 0
+      consecutiveErrors: 0,
+      lastError: ""
     });
     return { success: true, found: circulars.length, new: 0, cached: true };
   }
@@ -506,6 +508,7 @@ async function runCheckPipeline(env) {
       firstRun: true,
       consecutiveEmptyRuns: 0,
       consecutiveErrors: 0,
+      lastError: "",
       digest: currentDigest,
       etag: resp.headers.get("ETag") || ""
     };
@@ -540,6 +543,7 @@ async function runCheckPipeline(env) {
       newFound: 0,
       consecutiveEmptyRuns: 0,
       consecutiveErrors: 0,
+      lastError: "",
       digest: currentDigest,
       etag: resp.headers.get("ETag") || ""
     });
@@ -591,6 +595,7 @@ async function runCheckPipeline(env) {
       newFound: newCirculars.length,
       consecutiveEmptyRuns: 0,
       consecutiveErrors: 0,
+      lastError: "",
       digest: currentDigest,
       etag: resp.headers.get("ETag") || ""
     });
@@ -726,7 +731,7 @@ export default {
     const lastNew = metaData.newFound ?? "—";
     const consecutiveErrors = metaData.consecutiveErrors || 0;
     const consecutiveEmptyRuns = metaData.consecutiveEmptyRuns || 0;
-    const lastError = metaData.lastError || "";
+    const lastError = (consecutiveErrors > 0 || consecutiveEmptyRuns > 0) ? (metaData.lastError || "") : "";
 
     const isHealthy = consecutiveErrors < 6 && consecutiveEmptyRuns < 6;
     const healthText = isHealthy ? "Healthy" : "Degraded";
