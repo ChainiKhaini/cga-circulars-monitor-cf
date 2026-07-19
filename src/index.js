@@ -826,6 +826,43 @@ export default {
             } else if (text.startsWith("/check")) {
               ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, "🔍 <b>Checking CGA website for new circulars...</b>"));
               ctx.waitUntil(checkForUpdates(env));
+            } else if (text.toLowerCase().startsWith("/forcelast10")) {
+              ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, "🔍 <b>Fetching latest 10 circulars & PDFs from CGA website...</b>"));
+              ctx.waitUntil((async () => {
+                try {
+                  const cgaUrl = env.CGA_URL || "https://cga.gov.in/Circular/Published/9350.aspx";
+                  const resp = await fetch(cgaUrl, {
+                    headers: {
+                      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                      Accept: "text/html,application/xhtml+xml",
+                    },
+                    signal: AbortSignal.timeout(30000)
+                  });
+                  if (!resp.ok) {
+                    await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, `❌ Failed to fetch CGA page (HTTP ${resp.status})`);
+                    return;
+                  }
+                  const circulars = await parseCirculars(resp, cgaUrl);
+                  if (circulars.length === 0) {
+                    await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, "⚠️ Zero circulars found on page.");
+                    return;
+                  }
+                  const top10 = circulars.slice(0, 10);
+                  await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, `📢 <b>Latest 10 CGA Circulars (sending PDFs...):</b>`);
+
+                  for (let i = 0; i < top10.length; i++) {
+                    const circ = top10[i];
+                    const caption = `${i + 1}. 📄 <b>${escapeHtml(circ.title)}</b>\n\n🔗 <a href="${escapeHtml(circ.url)}">Direct Link</a>`;
+                    const sent = await sendTelegramDocument(env.TELEGRAM_BOT_TOKEN, chatIdStr, circ.url, caption);
+                    if (!sent) {
+                      await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, caption);
+                    }
+                  }
+                } catch (err) {
+                  console.error("ForceLast10 failed:", err.message);
+                  await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, `❌ ForceLast10 failed: ${escapeHtml(err.message)}`);
+                }
+              })());
             } else if (text.startsWith("/start") || text.startsWith("/help")) {
               const helpMsg = [
                 `🤖 <b>CGA Monitor Bot Commands</b>`,
@@ -833,6 +870,7 @@ export default {
                 `/status - View current monitor status & stats`,
                 `/recent - View last 10 detected circulars`,
                 `/check - Trigger an on-demand check now`,
+                `/forcelast10 - Fetch latest 10 circulars & PDFs directly from CGA site`,
                 `/help - Display this help message`
               ].join("\n");
               ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, helpMsg));
