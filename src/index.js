@@ -11,7 +11,6 @@
 // ─── Constants ──────────────────────────────────────────────
 const KV_KEY_SEEN = "seen_urls";
 const KV_KEY_META = "meta";
-const KV_KEY_RECENT = "recent_circulars";
 
 const DASHBOARD_CSS = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -314,19 +313,7 @@ function buildMessages(circulars, cgaUrl) {
       : escapeHtml(clean);
   }
 
-  if (circulars.length === 1) {
-    const circ = circulars[0];
-    const msg = [
-      `📢 <b>New CGA Circular</b>`,
-      ``,
-      `📄 ${getEscapedTitle(circ.title)}`,
-      ``,
-      `🔗 <a href="${escapeHtml(circ.url)}">View Circular</a>`,
-    ].join("\n");
-    return [msg];
-  }
-
-  const header = `📢 <b>${circulars.length} New CGA Circulars</b>\n\n`;
+  const header = `📢 <b>${circulars.length} New CGA Circular${circulars.length > 1 ? "s" : ""}</b>\n\n`;
   const footer = `\n🌐 <a href="${escapedCgaUrl}">View All Circulars</a>`;
   
   let currentChunk = [];
@@ -375,20 +362,7 @@ async function saveMeta(kv, meta) {
 // ─── Main Pipeline ──────────────────────────────────────────
 
 async function checkForUpdates(env) {
-  const kv = env.CGA_STORE;
-  
-  const lock = await kv.get("lock");
-  if (lock) {
-    console.log("Check is already in flight (lock active). Skipping.");
-    return { success: true, skipped: "lock active" };
-  }
-  await kv.put("lock", "active", { expirationTtl: 120 });
-
-  try {
-    return await runCheckPipeline(env);
-  } finally {
-    await kv.delete("lock");
-  }
+  return await runCheckPipeline(env);
 }
 
 async function runCheckPipeline(env) {
@@ -432,8 +406,9 @@ async function runCheckPipeline(env) {
   // Handle 304 Not Modified
   if (resp.status === 304) {
     console.log("304 Not Modified. Short-circuiting.");
+    const { firstRun, ...cleanMeta } = meta;
     await saveMeta(kv, {
-      ...meta,
+      ...cleanMeta,
       lastCheck: new Date().toISOString(),
       consecutiveErrors: 0,
       lastError: ""
@@ -483,8 +458,9 @@ async function runCheckPipeline(env) {
 
   if (meta.digest && meta.digest === currentDigest) {
     console.log("Digest match. Short-circuiting.");
+    const { firstRun, ...cleanMeta } = meta;
     await saveMeta(kv, {
-      ...meta,
+      ...cleanMeta,
       lastCheck: new Date().toISOString(),
       consecutiveEmptyRuns: 0,
       consecutiveErrors: 0,
@@ -536,8 +512,9 @@ async function runCheckPipeline(env) {
 
   if (newCirculars.length === 0) {
     console.log("No new circulars found");
+    const { firstRun, ...cleanMeta } = meta;
     await saveMeta(kv, {
-      ...meta,
+      ...cleanMeta,
       lastCheck: new Date().toISOString(),
       totalTracked: circulars.length,
       newFound: 0,
@@ -579,20 +556,22 @@ async function runCheckPipeline(env) {
     }
     await saveSeenUrls(kv, seenUrls);
 
-    // Save recent circulars (prepend new ones, keep last 10)
-    const existingRecent = await kv.get(KV_KEY_RECENT, { type: "json" }) || [];
+    // Save recent circulars inside meta (prepend new ones, keep last 10)
+    const existingRecent = meta.recent || [];
     const newEntries = newCirculars.map(c => ({
       title: c.title,
       url: c.url,
       detectedAt: new Date().toISOString()
     }));
     const updatedRecent = [...newEntries, ...existingRecent].slice(0, 10);
-    await kv.put(KV_KEY_RECENT, JSON.stringify(updatedRecent));
 
+    const { firstRun, ...cleanMeta } = meta;
     await saveMeta(kv, {
+      ...cleanMeta,
       lastCheck: new Date().toISOString(),
       totalTracked: circulars.length,
       newFound: newCirculars.length,
+      recent: updatedRecent,
       consecutiveEmptyRuns: 0,
       consecutiveErrors: 0,
       lastError: "",
@@ -709,7 +688,8 @@ export default {
     }
 
     if (url.pathname === "/recent") {
-      const recent = await env.CGA_STORE.get(KV_KEY_RECENT, { type: "json" }) || [];
+      const meta = await loadMeta(env.CGA_STORE);
+      const recent = meta?.recent || [];
       return new Response(JSON.stringify(recent, null, 2), {
         headers: { 
           "Content-Type": "application/json",
@@ -733,12 +713,8 @@ export default {
     }
 
     // Default: status page
-    const [meta, recentCirculars] = await Promise.all([
-      loadMeta(env.CGA_STORE),
-      env.CGA_STORE.get(KV_KEY_RECENT, { type: "json" })
-    ]);
-    const metaData = meta || {};
-    const recent = recentCirculars || [];
+    const metaData = await loadMeta(env.CGA_STORE) || {};
+    const recent = metaData.recent || [];
     const lastCheck = metaData.lastCheck || "never";
     const tracked = metaData.totalTracked || 0;
     const lastNew = metaData.newFound ?? "—";
@@ -788,11 +764,11 @@ export default {
     </div>
     <div class="stat">
       <span class="label">Circulars Tracked</span>
-      <span class="value">${escapeHtml(String(tracked))}</span>
+      <span class="value">${tracked}</span>
     </div>
     <div class="stat">
       <span class="label">New (Last Run)</span>
-      <span class="value">${escapeHtml(String(lastNew))}</span>
+      <span class="value">${lastNew}</span>
     </div>
     <div class="stat">
       <span class="label">Schedule</span>
