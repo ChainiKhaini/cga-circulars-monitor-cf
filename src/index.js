@@ -421,7 +421,7 @@ async function runCheckPipeline(env) {
   try {
     resp = await fetch(cgaUrl, {
       headers,
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(25000)
     });
   } catch (err) {
     console.error(`Fetch error: ${err.message}`);
