@@ -301,7 +301,7 @@ async function sendTelegram(botToken, chatId, message) {
  * Sends a PDF file/document attachment via Telegram sendDocument API.
  * Uses direct document URL so Telegram fetches and archives the PDF natively.
  */
-async function sendTelegramDocument(botToken, chatId, documentUrl, caption) {
+async function sendTelegramDocument(botToken, chatId, documentUrl, caption, customFilename) {
   if (!botToken || !chatId || !documentUrl) return false;
   
   try {
@@ -311,7 +311,7 @@ async function sendTelegramDocument(botToken, chatId, documentUrl, caption) {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Accept: "application/pdf,*/*"
       },
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(6000)
     });
 
     if (!pdfResp.ok) return false;
@@ -321,7 +321,8 @@ async function sendTelegramDocument(botToken, chatId, documentUrl, caption) {
       return false; // Skip if empty or larger than 20MB
     }
 
-    let filename = documentUrl.split("/").pop() || "circular.pdf";
+    let filename = customFilename || documentUrl.split("/").pop() || "circular.pdf";
+    filename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, "_");
     if (!filename.toLowerCase().endsWith(".pdf")) {
       filename += ".pdf";
     }
@@ -335,7 +336,7 @@ async function sendTelegramDocument(botToken, chatId, documentUrl, caption) {
 
     const url = `https://api.telegram.org/bot${botToken}/sendDocument`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     const resp = await fetch(url, {
       method: "POST",
@@ -877,20 +878,24 @@ export default {
                   const summaryMsg = `📢 <b>Latest 10 CGA Circulars:</b>\n\n${items}`;
                   await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, summaryMsg);
 
-                  // 2. Stream actual PDF document files cleanly (no fallback text messages)
-                  for (let i = 0; i < top10.length; i++) {
-                    const circ = top10[i];
-                    const cleanTitle = circ.title.trim();
-                    const caption = `${i + 1}. 📄 <b>${escapeHtml(cleanTitle)}</b>`;
-                    
-                    try {
-                      await sendTelegramDocument(env.TELEGRAM_BOT_TOKEN, chatIdStr, circ.url, caption);
-                    } catch (e) {
-                      console.error(`Document ${i + 1} error:`, e.message);
-                    }
+                  // 2. Stream actual PDF document files concurrently in batches of 3
+                  const batchSize = 3;
+                  for (let i = 0; i < top10.length; i += batchSize) {
+                    const chunk = top10.slice(i, i + batchSize);
+                    await Promise.all(chunk.map(async (circ, idx) => {
+                      const itemIndex = i + idx + 1;
+                      const cleanTitle = circ.title.trim();
+                      const caption = `${itemIndex}. 📄 <b>${escapeHtml(cleanTitle)}</b>`;
+                      
+                      const orderMatch = cleanTitle.match(/order\s*(?:no\.?|number)?\s*([0-9]+)/i);
+                      const cleanFilename = orderMatch ? `Order_${orderMatch[1]}.pdf` : `Circular_${itemIndex}.pdf`;
 
-                    // 400ms pause between Telegram API uploads to prevent rate-limiting
-                    await new Promise(r => setTimeout(r, 400));
+                      try {
+                        await sendTelegramDocument(env.TELEGRAM_BOT_TOKEN, chatIdStr, circ.url, caption, cleanFilename);
+                      } catch (e) {
+                        console.error(`Document ${itemIndex} error:`, e.message);
+                      }
+                    }));
                   }
                 } catch (err) {
                   console.error("ForceLast10 failed:", err.message);
