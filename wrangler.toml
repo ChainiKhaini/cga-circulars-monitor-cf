@@ -1,0 +1,29 @@
+name = "cga-monitor"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+# ─── Cron Trigger ───────────────────────────────────────────
+# Runs every 15 minutes automatically (free tier supports this)
+[triggers]
+crons = [
+  "*/10 3-14 * * 1-5",   # ~08:30-20:00 IST weekdays, every 10 min
+  "0 */3 * * *"          # safety net the rest of the time
+]
+
+# ─── KV Namespace Binding ───────────────────────────────────
+# You MUST create this KV namespace before deploying:
+#   wrangler kv namespace create CGA_STORE
+# Then paste the returned id below.
+[[kv_namespaces]]
+binding = "CGA_STORE"
+id = "fc3b746bcd5d4b199d462c22631c4638"
+
+# ─── Environment Variables (non-secret) ─────────────────────
+[vars]
+CGA_URL = "https://cga.gov.in/Circular/Published/9350.aspx"
+MAX_NOTIFICATIONS = "10"
+
+# ─── Secrets (set via CLI, not stored in this file) ─────────
+# Run these commands to set your Telegram credentials:
+#   wrangler secret put TELEGRAM_BOT_TOKEN
+#   wrangler secret put TELEGRAM_CHAT_ID

@@ -1,0 +1,14 @@
+{
+  "name": "cga-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker to monitor CGA circulars and send Telegram notifications",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}
