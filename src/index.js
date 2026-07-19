@@ -303,20 +303,43 @@ async function sendTelegram(botToken, chatId, message) {
  */
 async function sendTelegramDocument(botToken, chatId, documentUrl, caption) {
   if (!botToken || !chatId || !documentUrl) return false;
-  const url = `https://api.telegram.org/bot${botToken}/sendDocument`;
+  
   try {
+    // 1. Fetch PDF buffer directly from CGA page with User-Agent
+    const pdfResp = await fetch(documentUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "application/pdf,*/*"
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!pdfResp.ok) return false;
+    const pdfBuffer = await pdfResp.arrayBuffer();
+
+    if (pdfBuffer.byteLength === 0 || pdfBuffer.byteLength > 20 * 1024 * 1024) {
+      return false; // Skip if empty or larger than 20MB
+    }
+
+    let filename = documentUrl.split("/").pop() || "circular.pdf";
+    if (!filename.toLowerCase().endsWith(".pdf")) {
+      filename += ".pdf";
+    }
+
+    // 2. Build FormData upload for Telegram API
+    const formData = new FormData();
+    formData.append("chat_id", chatId);
+    formData.append("caption", caption.length > 300 ? caption.substring(0, 300) + "..." : caption);
+    formData.append("parse_mode", "HTML");
+    formData.append("document", new Blob([pdfBuffer], { type: "application/pdf" }), filename);
+
+    const url = `https://api.telegram.org/bot${botToken}/sendDocument`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        document: documentUrl,
-        caption: caption,
-        parse_mode: "HTML"
-      }),
+      body: formData,
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -327,7 +350,7 @@ async function sendTelegramDocument(botToken, chatId, documentUrl, caption) {
     }
     return false;
   } catch (err) {
-    console.error(`sendTelegramDocument failed: ${err.message}`);
+    console.error(`sendTelegramDocument upload failed for ${documentUrl}: ${err.message}`);
     return false;
   }
 }
@@ -849,29 +872,25 @@ export default {
                   }
                   const top10 = circulars.slice(0, 10);
                   
-                  // 1. Send clean summary list first so all 10 circulars are delivered immediately!
+                  // 1. Send ONE single summary message containing all 10 circulars + links
                   const items = top10.map((c, i) => `${i + 1}. <a href="${escapeHtml(c.url)}">${escapeHtml(c.title)}</a>`).join("\n\n");
                   const summaryMsg = `📢 <b>Latest 10 CGA Circulars:</b>\n\n${items}`;
                   await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, summaryMsg);
 
-                  // 2. Stream PDF document attachments with per-file try/catch & rate-limit delay
+                  // 2. Stream actual PDF document files cleanly (no fallback text messages)
                   for (let i = 0; i < top10.length; i++) {
                     const circ = top10[i];
                     const cleanTitle = circ.title.trim();
-                    const caption = `${i + 1}. 📄 <b>${escapeHtml(cleanTitle.length > 150 ? cleanTitle.substring(0, 150) + "..." : cleanTitle)}</b>\n\n🔗 <a href="${escapeHtml(circ.url)}">Direct Link</a>`;
+                    const caption = `${i + 1}. 📄 <b>${escapeHtml(cleanTitle)}</b>`;
                     
                     try {
-                      const docSent = await sendTelegramDocument(env.TELEGRAM_BOT_TOKEN, chatIdStr, circ.url, caption);
-                      if (!docSent) {
-                        // Fallback text message if Telegram rejected document URL
-                        await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, caption);
-                      }
+                      await sendTelegramDocument(env.TELEGRAM_BOT_TOKEN, chatIdStr, circ.url, caption);
                     } catch (e) {
                       console.error(`Document ${i + 1} error:`, e.message);
                     }
 
-                    // 300ms pause between Telegram API calls to prevent 429 rate limits
-                    await new Promise(r => setTimeout(r, 300));
+                    // 400ms pause between Telegram API uploads to prevent rate-limiting
+                    await new Promise(r => setTimeout(r, 400));
                   }
                 } catch (err) {
                   console.error("ForceLast10 failed:", err.message);
