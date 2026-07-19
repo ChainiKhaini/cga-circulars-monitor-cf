@@ -7,7 +7,7 @@ compatibility_date = "2024-12-01"
 [triggers]
 crons = [
   "*/10 3-14 * * 1-5",   # ~08:30-20:00 IST weekdays, every 10 min
-  "0 */3 * * *"          # safety net the rest of the time
+  "5 */3 * * *"          # safety net the rest of the time (min 5 prevents collision with min 0)
 ]
 
 # ─── KV Namespace Binding ───────────────────────────────────

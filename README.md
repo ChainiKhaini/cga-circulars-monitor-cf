@@ -52,7 +52,7 @@ This worker exposes a clean, secure HTTP web dashboard and API endpoints:
   - System Health Status & Last Check Timestamp
   - Total Circulars Tracked & Count of New Circulars found in the last run
   - **📄 Last 10 Updates**: Interactive list showing the 10 most recent CGA circular updates detected, complete with direct PDF links and detection timestamps.
-  - **"Run Check Now" Button**: Clickable button that prompts for a password (`GEON` by default) to securely trigger an on-demand check directly from your browser.
+  - **"Run Check Now" Button**: Clickable button that prompts for your admin password (`ADMIN_TOKEN`) to securely trigger an on-demand check directly from your browser.
 * **`/recent`**: Returns the 10 most recent circulars detected as a clean JSON array (`title`, `url`, `detectedAt`).
 * **`/status`**: Returns the raw JSON status metadata representing worker health and execution statistics.
 * **`/check`**: Manually triggers a circulars check in the background (`202 Accepted`). Requires bearer token authentication (`Authorization: Bearer <ADMIN_TOKEN>`).

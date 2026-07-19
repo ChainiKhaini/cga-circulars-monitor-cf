@@ -352,7 +352,7 @@ function buildMessages(circulars, cgaUrl) {
 // ─── KV Helpers ─────────────────────────────────────────────
 
 async function loadSeenUrls(kv) {
-  const data = await kv.get(KV_KEY_SEEN, { type: "json", cacheTtl: 600 });
+  const data = await kv.get(KV_KEY_SEEN, { type: "json" });
   return data ? new Set(data) : null;
 }
 
@@ -469,8 +469,8 @@ async function runCheckPipeline(env) {
       lastError: "Zero circulars found by parser"
     });
     
-    if (emptyCount === 6 && botToken && chatId) {
-      const deadmanMsg = `⚠️ <b>CGA Monitor Alert:</b> 6 consecutive runs found zero circulars. The parser is likely broken.\n\n🌐 <a href="${escapeHtml(cgaUrl)}">CGA Website</a>`;
+    if (emptyCount >= 6 && emptyCount % 6 === 0 && botToken && chatId) {
+      const deadmanMsg = `⚠️ <b>CGA Monitor Alert:</b> ${emptyCount} consecutive runs found zero circulars. The parser is likely broken.\n\n🌐 <a href="${escapeHtml(cgaUrl)}">CGA Website</a>`;
       await sendTelegram(botToken, chatId, deadmanMsg);
     }
     
@@ -618,8 +618,8 @@ async function handleFailure(kv, meta, errorMsg, botToken, chatId, cgaUrl) {
   };
   await saveMeta(kv, newMeta);
   
-  if (errorCount === 6 && botToken && chatId) {
-    const deadmanMsg = `⚠️ <b>CGA Monitor Alert:</b> 6 consecutive errors occurred. Monitor might be failing.\nError: ${escapeHtml(errorMsg)}\n\n🌐 <a href="${escapeHtml(cgaUrl)}">CGA Website</a>`;
+  if (errorCount >= 6 && errorCount % 6 === 0 && botToken && chatId) {
+    const deadmanMsg = `⚠️ <b>CGA Monitor Alert:</b> ${errorCount} consecutive errors occurred. Monitor might be failing.\nError: ${escapeHtml(errorMsg)}\n\n🌐 <a href="${escapeHtml(cgaUrl)}">CGA Website</a>`;
     await sendTelegram(botToken, chatId, deadmanMsg);
   }
 }
@@ -648,6 +648,17 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/check") {
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method Not Allowed" }, null, 2), {
+          status: 405,
+          headers: { 
+            "Content-Type": "application/json",
+            "Allow": "POST",
+            "X-Content-Type-Options": "nosniff"
+          }
+        });
+      }
+
       const authHeader = request.headers.get("Authorization") || "";
       const expectedToken = env.ADMIN_TOKEN;
       if (!expectedToken) {
@@ -702,6 +713,7 @@ export default {
       return new Response(JSON.stringify(recent, null, 2), {
         headers: { 
           "Content-Type": "application/json",
+          "Cache-Control": "max-age=60",
           "X-Content-Type-Options": "nosniff",
           "Referrer-Policy": "no-referrer"
         },
@@ -713,6 +725,7 @@ export default {
       return new Response(JSON.stringify(meta || { status: "no data yet" }, null, 2), {
         headers: { 
           "Content-Type": "application/json",
+          "Cache-Control": "max-age=60",
           "X-Content-Type-Options": "nosniff",
           "Referrer-Policy": "no-referrer"
         },
