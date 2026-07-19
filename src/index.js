@@ -298,6 +298,41 @@ async function sendTelegram(botToken, chatId, message) {
 }
 
 /**
+ * Sends a PDF file/document attachment via Telegram sendDocument API.
+ * Uses direct document URL so Telegram fetches and archives the PDF natively.
+ */
+async function sendTelegramDocument(botToken, chatId, documentUrl, caption) {
+  if (!botToken || !chatId || !documentUrl) return false;
+  const url = `https://api.telegram.org/bot${botToken}/sendDocument`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        document: documentUrl,
+        caption: caption,
+        parse_mode: "HTML"
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (resp.ok) {
+      const data = await resp.json();
+      return !!data.ok;
+    }
+    return false;
+  } catch (err) {
+    console.error(`sendTelegramDocument failed: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * Builds formatted and length-restricted Telegram HTML notification chunks.
  */
 function buildMessages(circulars, cgaUrl) {
@@ -533,13 +568,23 @@ async function runCheckPipeline(env) {
 
   if (hasTelegramCreds) {
     const toNotify = newCirculars.slice(0, maxNotifications);
-    const messages = buildMessages(toNotify, cgaUrl);
+    
+    // Attempt PDF document forwarding for single circular PDF updates
+    let pdfSent = false;
+    if (toNotify.length === 1 && (toNotify[0].url.toLowerCase().endsWith(".pdf") || toNotify[0].url.toLowerCase().includes(".pdf"))) {
+      const circ = toNotify[0];
+      const caption = `📄 <b>New CGA Circular</b>\n\n${escapeHtml(circ.title)}\n\n🔗 <a href="${escapeHtml(circ.url)}">Direct Link</a>`;
+      pdfSent = await sendTelegramDocument(botToken, chatId, circ.url, caption);
+    }
 
-    for (const msg of messages) {
-      const success = await sendTelegram(botToken, chatId, msg);
-      if (!success) {
-        deliverySuccessful = false;
-        break; // Stop immediately so we retry the whole batch on next cron run
+    if (!pdfSent) {
+      const messages = buildMessages(toNotify, cgaUrl);
+      for (const msg of messages) {
+        const success = await sendTelegram(botToken, chatId, msg);
+        if (!success) {
+          deliverySuccessful = false;
+          break; // Stop immediately so we retry the whole batch on next cron run
+        }
       }
     }
 
@@ -697,6 +742,110 @@ export default {
           "X-Content-Type-Options": "nosniff",
           "Referrer-Policy": "no-referrer"
         },
+      });
+    }
+
+    if (url.pathname === "/health") {
+      const meta = await loadMeta(env.CGA_STORE) || {};
+      const consecutiveErrors = meta.consecutiveErrors || 0;
+      const consecutiveEmptyRuns = meta.consecutiveEmptyRuns || 0;
+      const isHealthy = consecutiveErrors < 6 && consecutiveEmptyRuns < 6;
+      const status = isHealthy ? "healthy" : "degraded";
+      const httpCode = isHealthy ? 200 : 503;
+
+      return new Response(JSON.stringify({
+        status,
+        lastCheck: meta.lastCheck || "never",
+        totalTracked: meta.totalTracked || 0,
+        consecutiveErrors,
+        consecutiveEmptyRuns
+      }, null, 2), {
+        status: httpCode,
+        headers: { 
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff"
+        },
+      });
+    }
+
+    if (url.pathname === "/webhook" || url.pathname === "/telegram-webhook") {
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method Not Allowed" }, null, 2), {
+          status: 405,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      // Verify X-Telegram-Bot-Api-Secret-Token
+      const secretHeader = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+      const expectedSecret = env.TELEGRAM_WEBHOOK_SECRET || env.ADMIN_TOKEN;
+      if (expectedSecret && !secureCompare(secretHeader, expectedSecret)) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }, null, 2), {
+          status: 401,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      try {
+        const update = await request.json();
+        const msg = update.message;
+
+        if (msg && msg.text && msg.chat) {
+          const chatIdStr = String(msg.chat.id);
+          const configuredChatId = String(env.TELEGRAM_CHAT_ID || "");
+
+          // Only process commands from authorized chat ID
+          if (!configuredChatId || chatIdStr === configuredChatId) {
+            const text = msg.text.trim();
+
+            if (text.startsWith("/status")) {
+              const meta = await loadMeta(env.CGA_STORE) || {};
+              const lastCheck = meta.lastCheck ? new Date(meta.lastCheck).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "Never";
+              const isHealthy = (meta.consecutiveErrors || 0) < 6 && (meta.consecutiveEmptyRuns || 0) < 6;
+              const statusMsg = [
+                `📊 <b>CGA Monitor Status</b>`,
+                ``,
+                `• Health: <b>${isHealthy ? "Healthy ✅" : "Degraded ⚠️"}</b>`,
+                `• Last Check: <code>${escapeHtml(lastCheck)}</code>`,
+                `• Circulars Tracked: <b>${meta.totalTracked || 0}</b>`,
+                `• New (Last Run): <b>${meta.newFound ?? "—"}</b>`,
+                `• Consecutive Errors: <b>${meta.consecutiveErrors || 0}</b>`
+              ].join("\n");
+              ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, statusMsg));
+            } else if (text.startsWith("/recent")) {
+              const meta = await loadMeta(env.CGA_STORE) || {};
+              const recent = meta.recent || [];
+              if (recent.length === 0) {
+                ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, "📄 No recent circulars recorded yet."));
+              } else {
+                const items = recent.map((c, i) => `${i + 1}. <a href="${escapeHtml(c.url)}">${escapeHtml(c.title)}</a>`).join("\n\n");
+                const recentMsg = `📄 <b>Last ${recent.length} CGA Circular Updates:</b>\n\n${items}`;
+                ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, recentMsg));
+              }
+            } else if (text.startsWith("/check")) {
+              ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, "🔍 <b>Checking CGA website for new circulars...</b>"));
+              ctx.waitUntil(checkForUpdates(env));
+            } else if (text.startsWith("/start") || text.startsWith("/help")) {
+              const helpMsg = [
+                `🤖 <b>CGA Monitor Bot Commands</b>`,
+                ``,
+                `/status - View current monitor status & stats`,
+                `/recent - View last 10 detected circulars`,
+                `/check - Trigger an on-demand check now`,
+                `/help - Display this help message`
+              ].join("\n");
+              ctx.waitUntil(sendTelegram(env.TELEGRAM_BOT_TOKEN, chatIdStr, helpMsg));
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Webhook processing error:", err.message);
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
       });
     }
 

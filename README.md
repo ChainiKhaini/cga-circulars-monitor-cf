@@ -55,7 +55,9 @@ This worker exposes a clean, secure HTTP web dashboard and API endpoints:
   - **"Run Check Now" Button**: Clickable button that prompts for your admin password (`ADMIN_TOKEN`) to securely trigger an on-demand check directly from your browser.
 * **`/recent`**: Returns the 10 most recent circulars detected as a clean JSON array (`title`, `url`, `detectedAt`).
 * **`/status`**: Returns the raw JSON status metadata representing worker health and execution statistics.
-* **`/check`**: Manually triggers a circulars check in the background (`202 Accepted`). Requires bearer token authentication (`Authorization: Bearer <ADMIN_TOKEN>`).
+* **`/health`**: External health check endpoint for UptimeRobot / Cronitor. Returns HTTP `200 OK` when healthy, and HTTP `503 Service Unavailable` when degraded.
+* **`/webhook`**: Telegram Bot Webhook endpoint. Authenticates incoming updates via `X-Telegram-Bot-Api-Secret-Token` header and processes interactive commands (`/status`, `/recent`, `/check`, `/help`).
+* **`/check`**: Manually triggers a circulars check in the background (`202 Accepted`, POST method required). Requires bearer token authentication (`Authorization: Bearer <ADMIN_TOKEN>`).
 
 ---
 
